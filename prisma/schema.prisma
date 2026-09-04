@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String   @unique
+  passwordHash String
+  role         String   @default("farmer")
+  village      String?
+  state        String?
+  upiId        String?
+  acHolderName String?
+  bankName     String?
+  accountNumber String?
+  ifsc         String?
+  createdAt    DateTime @default(now())
+  lands        Land[]
+  trees        Tree[]
+  listings     Listing[]
+}
+
+model Land {
+  id          String   @id @default(cuid())
+  userId      String
+  ownerName   String
+  title       String
+  village     String
+  district    String
+  state       String
+  areaHa      Float
+  areaAcres   Float
+  lat         Float
+  lng         Float
+  polygons    String?
+  vegetationType String
+  cropType    String?
+  soilType    String?
+  waterSource String?
+  estCreditsPerHa Float
+  estTotalCredits Float
+  estValueINR Float
+  registeredAt DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trees       Tree[]
+}
+
+model Tree {
+  id          String   @id @default(cuid())
+  userId      String
+  landId      String?
+  species     String
+  ageYears    Int
+  heightM     Float
+  imageBase64 String?
+  lat         Float
+  lng         Float
+  locationName String?
+  estCO2Kg    Float
+  estValueINR Float
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  land        Land?    @relation(fields: [landId], references: [id], onDelete: SetNull)
+}
+
+model Listing {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  landId      String?
+  credits     Float
+  pricePerCreditINR Float
+  totalValueINR Float
+  status      String   @default("active")
+  listedAt    DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

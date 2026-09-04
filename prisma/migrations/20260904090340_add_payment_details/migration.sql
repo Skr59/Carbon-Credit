@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN "acHolderName" TEXT;
+ALTER TABLE "User" ADD COLUMN "accountNumber" TEXT;
+ALTER TABLE "User" ADD COLUMN "bankName" TEXT;
+ALTER TABLE "User" ADD COLUMN "ifsc" TEXT;
+ALTER TABLE "User" ADD COLUMN "upiId" TEXT;
