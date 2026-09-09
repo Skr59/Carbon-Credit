@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { NextRequest } from "next/server";
+import { prisma } from "@/lib/prisma";
 
 const JWT_SECRET = process.env.JWT_SECRET || "carbon-credit-farmer-super-secret-key-2026";
 
@@ -41,4 +42,15 @@ export function requireAuth(req: NextRequest): { token: string; user: JwtPayload
   const user = verifyToken(token);
   if (!user) return null;
   return { token, user };
+}
+
+export async function requireAdmin(req: NextRequest): Promise<{ token: string; user: JwtPayload } | null> {
+  const auth = requireAuth(req);
+  if (!auth) return null;
+  const dbUser = await prisma.user.findUnique({
+    where: { id: auth.user.userId },
+    select: { id: true, role: true },
+  });
+  if (!dbUser || dbUser.role !== "admin") return null;
+  return auth;
 }

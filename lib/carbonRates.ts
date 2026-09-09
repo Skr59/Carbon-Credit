@@ -21,7 +21,13 @@ export const TREE_TYPE_MAP: Record<string, TreeType> = Object.fromEntries(
   TREE_TYPES.map((t) => [t.key, t])
 );
 
-export const CREDIT_PRICE_INR = 1800;
+export const DEFAULT_CREDIT_PRICE_INR = 1800;
+
+export let CREDIT_PRICE_INR = DEFAULT_CREDIT_PRICE_INR;
+
+export function setCreditPriceINR(n: number) {
+  if (typeof n === "number" && isFinite(n) && n > 0) CREDIT_PRICE_INR = n;
+}
 
 const LEGACY_MAP: Record<string, string> = {
   plantation: "mango",

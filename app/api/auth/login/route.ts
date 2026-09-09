@@ -35,6 +35,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (user.role !== "admin" && (!user.emailVerified || !user.phoneVerified)) {
+      return NextResponse.json(
+        {
+          error: "verify_required",
+          needsVerification: true,
+          email: user.email,
+          phone: user.phone,
+        },
+        { status: 403 }
+      );
+    }
+
     const token = signToken(user);
 
     const res = NextResponse.json({
@@ -44,6 +56,8 @@ export async function POST(req: NextRequest) {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerified,
         village: user.village,
         state: user.state,
       },

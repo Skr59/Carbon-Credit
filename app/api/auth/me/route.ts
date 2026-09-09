@@ -16,6 +16,8 @@ export async function GET(req: NextRequest) {
       email: true,
       phone: true,
       role: true,
+      emailVerified: true,
+      phoneVerified: true,
       village: true,
       state: true,
       upiId: true,

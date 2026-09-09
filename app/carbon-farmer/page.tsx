@@ -7,14 +7,20 @@ import {
   Layers, User, LogOut, LayoutDashboard, Calculator, Landmark, ImagePlus,
   Store, Wallet, TrendingUp, Shield, CheckCircle2, X, Sprout, Users,
   QrCode, Copy, Check, Share2, Banknote, Phone, Building2, Navigation,
+  Car, Contact, FileText, ScrollText, History, Plus, Trash2,
+  Calendar, Wind, RefreshCw,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import QRCode from "qrcode";
-import { TREE_TYPES, TREE_TYPE_MAP, getCreditsPerHa } from "@/lib/carbonRates";
+import { TREE_TYPES, TREE_TYPE_MAP, getCreditsPerHa, CREDIT_PRICE_INR, DEFAULT_CREDIT_PRICE_INR, setCreditPriceINR } from "@/lib/carbonRates";
 import type { TreeType } from "@/lib/carbonRates";
+import { VEHICLE_TYPES, VEHICLE_TYPE_MAP, searchVehicleCatalog, getEmissionGPerKm, CATEGORY_LABELS, FUEL_LABELS } from "@/lib/vehicleRates";
 
-const MapInner = dynamic(() => import("./MapInner"), { ssr: false });
+const MapInner = dynamic(() => import("./MapInner"), {
+  ssr: false,
+  loading: () => <div className="w-full h-full min-h-[300px] bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center text-xs text-green-700 font-bold">Loading map…</div>,
+});
 
 interface AuthUser {
   id: string;
@@ -22,6 +28,8 @@ interface AuthUser {
   email: string;
   phone: string;
   role: string;
+  emailVerified?: boolean;
+  phoneVerified?: boolean;
   village?: string;
   state?: string;
   upiId?: string;
@@ -29,6 +37,53 @@ interface AuthUser {
   bankName?: string;
   accountNumber?: string;
   ifsc?: string;
+  aadharNumber?: string;
+  aadharImage?: string;
+  dlNumber?: string;
+  dlImage?: string;
+}
+
+interface Vehicle {
+  id: string;
+  name: string;
+  category: string;
+  fuel: string;
+  make: string;
+  model: string;
+  regNumber?: string;
+  year?: number;
+  emissionGPerKm: number;
+  createdAt: string;
+  trips?: Trip[];
+}
+
+interface Trip {
+  id: string;
+  vehicleId: string;
+  date: string;
+  distanceKm: number;
+  routeName?: string;
+  notes?: string;
+  emissionKg: number;
+}
+
+interface Licence {
+  id: string;
+  type: string;
+  co2OffsetKg: number;
+  credits: number;
+  totalValueINR: number;
+  status: string;
+  purchasedAt: string;
+}
+
+interface Documents {
+  id: string;
+  name: string;
+  aadharNumber?: string;
+  aadharImage?: string;
+  dlNumber?: string;
+  dlImage?: string;
 }
 
 interface Land {
@@ -96,7 +151,24 @@ interface Stats {
 }
 
 const API = "/api";
-const CREDIT_PRICE_INR = 1800;
+
+interface MarketInfo {
+  price: number;
+  live: boolean;
+  fetchedAt: string;
+  token?: string;
+}
+
+interface VerifyState {
+  mode: "gate" | "profile";
+  email: string;
+  phone: string;
+  devEmail?: string;
+  devPhone?: string;
+  emailOk: boolean;
+  phoneOk: boolean;
+  pendingLogin?: { email: string; password: string };
+}
 
 export default function CarbonFarmer() {
   const [token, setToken] = useState<string | null>(null);
@@ -113,9 +185,12 @@ export default function CarbonFarmer() {
   const [aPassword, setAPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [verifyState, setVerifyState] = useState<VerifyState | null>(null);
+  const [verifyBusy, setVerifyBusy] = useState<"email" | "phone" | "done" | null>(null);
+  const [verifyMsg, setVerifyMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Nav + data
-  const [tab, setTab] = useState<"overview" | "calculator" | "lands" | "trees" | "market" | "payment">("overview");
+  const [tab, setTab] = useState<"overview" | "calculator" | "lands" | "trees" | "market" | "payment" | "vehicle">("overview");
   const [stats, setStats] = useState<Stats | null>(null);
   const [lands, setLands] = useState<Land[]>([]);
   const [trees, setTrees] = useState<Tree[]>([]);
@@ -184,6 +259,33 @@ export default function CarbonFarmer() {
   const [payMsg, setPayMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [activeBuy, setActiveBuy] = useState<Listing | null>(null);
 
+  // Vehicle / Pollution state
+  const [documents, setDocuments] = useState<Documents | null>(null);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [licences, setLicences] = useState<Licence[]>([]);
+  const [market, setMarket] = useState<MarketInfo | null>(null);
+
+  const loadMarket = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/carbon-price`);
+      if (r.ok) {
+        const d = await r.json();
+        setCreditPriceINR(d.price);
+        setMarket({ price: d.price, live: d.live, fetchedAt: d.fetchedAt, token: d.tokenLabel });
+        if (user && token) {
+          const s = await api(`/api/stats`);
+          if (s.ok) setStats((await s.json()).stats);
+        }
+      }
+    } catch { /* ignore */ }
+  }, [user, token]);
+
+  useEffect(() => {
+    loadMarket();
+    const t = setInterval(loadMarket, 10 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [loadMarket]);
+
   useEffect(() => {
     if (user) {
       setPayUpi(user?.upiId || "");
@@ -247,16 +349,22 @@ export default function CarbonFarmer() {
 
   const loadAll = async (u: AuthUser) => {
     try {
-      const [sRes, lRes, tRes, mkRes] = await Promise.all([
+      const [sRes, lRes, tRes, mkRes, vRes, dRes, lcRes] = await Promise.all([
         api(`/api/stats`),
         api(`/api/lands`),
         api(`/api/trees`),
         api(`/api/marketplace`),
+        api(`/api/vehicles`),
+        api(`/api/documents`),
+        api(`/api/licence`),
       ]);
       if (sRes.ok) setStats((await sRes.json()).stats);
       if (lRes.ok) setLands((await lRes.json()).lands);
       if (tRes.ok) setTrees((await tRes.json()).trees);
       if (mkRes.ok) setListings((await mkRes.json()).listings);
+      if (vRes.ok) setVehicles((await vRes.json()).vehicles);
+      if (dRes.ok) setDocuments((await dRes.json()).documents);
+      if (lcRes.ok) setLicences((await lcRes.json()).licences);
     } catch { /* ignore */ }
   };
 
@@ -290,6 +398,25 @@ export default function CarbonFarmer() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
+      if (data.needsVerification || res.status === 403) {
+        if (data.needsVerification) {
+          setVerifyState({
+            mode: "gate",
+            email: data.email,
+            phone: data.phone,
+            devEmail: data.devEmail,
+            devPhone: data.devPhone,
+            emailOk: false,
+            phoneOk: false,
+            pendingLogin: { email: data.email, password: aPassword },
+          });
+          setAuthError(null);
+        } else {
+          setAuthError(data.error || "Something went wrong");
+        }
+        setAuthBusy(false);
+        return;
+      }
       if (!res.ok) {
         setAuthError(data.error || "Something went wrong");
         setAuthBusy(false);
@@ -298,6 +425,7 @@ export default function CarbonFarmer() {
       localStorage.setItem("cc_token", data.token);
       setToken(data.token);
       setUser(data.user);
+      setAuthMode("login");
     } catch (err) {
       setAuthError("Network error. Please try again.");
     } finally {
@@ -331,14 +459,104 @@ export default function CarbonFarmer() {
     }
   };
 
+  const verifyResend = async (type: "email" | "phone") => {
+    if (!verifyState) return;
+    setVerifyBusy(type);
+    setVerifyMsg(null);
+    try {
+      const value = type === "email" ? verifyState.email : verifyState.phone;
+      const r = await fetch(`${API}/auth/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, value }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Failed to send OTP");
+      setVerifyMsg({ ok: true, text: `${type === "email" ? "Email" : "SMS"} OTP sent to ${type === "email" ? verifyState.email : verifyState.phone} (valid 10 min)` });
+      if (d.devOtp) {
+        setVerifyState((s) => s ? { ...s, ...(type === "email" ? { devEmail: d.devOtp } : { devPhone: d.devOtp }) } : s);
+      }
+    } catch (err: any) {
+      setVerifyMsg({ ok: false, text: err.message || "Failed to send OTP" });
+    } finally {
+      setVerifyBusy(null);
+    }
+  };
+
+  const verifyChannel = async (type: "email" | "phone", code: string) => {
+    if (!verifyState) return;
+    setVerifyBusy(type);
+    setVerifyMsg(null);
+    try {
+      const value = type === "email" ? verifyState.email : verifyState.phone;
+      const r = await fetch(`${API}/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, value, code }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Verification failed");
+      setVerifyState((s) => s ? { ...s, ...(type === "email" ? { emailOk: true } : { phoneOk: true }) } : s);
+      setVerifyMsg({ ok: true, text: `${type === "email" ? "Email" : "Phone"} verified` });
+    } catch (err: any) {
+      setVerifyMsg({ ok: false, text: err.message || "Verification failed" });
+    } finally {
+      setVerifyBusy(null);
+    }
+  };
+
+  const verifyDone = async () => {
+    if (!verifyState || !verifyState.emailOk || !verifyState.phoneOk) return;
+    setVerifyBusy("done");
+    setVerifyMsg(null);
+    try {
+      if (verifyState.mode === "gate" && verifyState.pendingLogin) {
+        const r = await fetch(`${API}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: verifyState.pendingLogin.email, password: verifyState.pendingLogin.password }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Login failed");
+        localStorage.setItem("cc_token", d.token);
+        setToken(d.token);
+        setUser(d.user);
+        setVerifyState(null);
+      } else if (verifyState.mode === "profile" && token) {
+        await fetchUser(token);
+        setVerifyState(null);
+      }
+    } catch (err: any) {
+      setVerifyMsg({ ok: false, text: err.message || "Please try again" });
+    } finally {
+      setVerifyBusy(null);
+    }
+  };
+
+  const openVerifyFromProfile = () => {
+    if (!user) return;
+    setVerifyMsg(null);
+    setVerifyState({
+      mode: "profile",
+      email: user.email,
+      phone: user.phone,
+      emailOk: !!user.emailVerified,
+      phoneOk: !!user.phoneVerified,
+    });
+  };
+
   const logout = () => {
     localStorage.removeItem("cc_token");
     setToken(null);
     setUser(null);
+    setVerifyState(null);
     setStats(null);
     setLands([]);
     setTrees([]);
     setListings([]);
+    setVehicles([]);
+    setDocuments(null);
+    setLicences([]);
     setTab("overview");
   };
 
@@ -564,6 +782,19 @@ export default function CarbonFarmer() {
   }
 
   if (!user) {
+    if (verifyState && verifyState.mode === "gate") {
+      return (
+        <VerifyScreen
+          state={verifyState}
+          busy={verifyBusy}
+          msg={verifyMsg}
+          onResend={verifyResend}
+          onVerify={verifyChannel}
+          onDone={verifyDone}
+          onBack={() => setVerifyState(null)}
+        />
+      );
+    }
     return <AuthScreen mode={authMode} setMode={setAuthMode} form={{ aName,setAName,aEmail,setAEmail,aPhone,setAPhone,aVillage,setAVillage,aState,setAState,aPassword,setAPassword }} error={authError} busy={authBusy} onSubmit={doAuth} onDemoLogin={demoLogin} />;
   }
 
@@ -582,9 +813,9 @@ export default function CarbonFarmer() {
           </div>
         </div>
 
-        <div className="mx-4 p-3 bg-white/10 rounded-xl mb-4">
+        <div className="mx-4 p-3 bg-white/10 backdrop-blur rounded-xl mb-4 border border-white/10">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 bg-amber-400 text-green-900 rounded-full flex items-center justify-center font-black">{user.name.charAt(0).toUpperCase()}</div>
+            <div className="w-9 h-9 bg-gradient-to-br from-amber-400 to-orange-500 text-green-950 rounded-full flex items-center justify-center font-black ring-2 ring-white/30">{user.name.charAt(0).toUpperCase()}</div>
             <div className="min-w-0">
               <p className="text-sm font-bold truncate">{user.name}</p>
               <p className="text-[10px] text-green-200 truncate">{user.village || user.state || "Farmer"}</p>
@@ -601,6 +832,7 @@ export default function CarbonFarmer() {
             { key: "trees", label: "My Trees", icon: TreePine },
             { key: "market", label: "Marketplace", icon: Store },
             { key: "payment", label: "Payment & Wallet", icon: Wallet },
+            { key: "vehicle", label: "Vehicles & Pollution", icon: Car },
           ].map((item) => (
             <button key={item.key} onClick={() => setTab(item.key as any)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors ${tab === item.key ? "bg-white text-green-800 shadow" : "hover:bg-white/10"}`}>
@@ -632,6 +864,7 @@ export default function CarbonFarmer() {
             { key: "trees", label: "Trees", icon: TreePine },
             { key: "market", label: "Market", icon: Store },
             { key: "payment", label: "Pay", icon: Wallet },
+            { key: "vehicle", label: "Vehicles", icon: Car },
           ].map((i) => (
             <button key={i.key} onClick={() => setTab(i.key as any)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap ${tab === i.key ? "bg-green-600 text-white" : "bg-green-50 text-green-700"}`}>
@@ -641,7 +874,13 @@ export default function CarbonFarmer() {
         </div>
 
         <main className="flex-1 p-4 lg:p-6 overflow-y-auto">
-          {tab === "overview" && <Overview user={user} stats={stats} lands={lands} trees={trees} onGo={setTab} />}
+          {(!user.emailVerified || !user.phoneVerified) && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-800 flex items-center justify-between gap-3">
+              <p className="font-semibold flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" /> Verify your email & phone to fully secure your account.</p>
+              <button onClick={openVerifyFromProfile} className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-2 rounded-lg shrink-0">Verify now</button>
+            </div>
+          )}
+          {tab === "overview" && <Overview user={user} stats={stats} lands={lands} trees={trees} market={market} onGo={setTab} />}
           {tab === "calculator" && (
             <CalculatorTab
               searchRef={searchRef} searchQuery={searchQuery} setSearchQuery={(v) => { setSearchQuery(v); searchLocation(v); }}
@@ -677,7 +916,7 @@ export default function CarbonFarmer() {
               title={mkTitle} setTitle={setMkTitle} credits={mkCredits} setCredits={setMkCredits}
               price={mkPrice} setPrice={setMkPrice} landId={mkLandId} setLandId={setMkLandId}
               lands={lands} busy={mkBusy} msg={mkMsg} onSubmit={createListing} user={user}
-              onBuy={setActiveBuy} />
+              onBuy={setActiveBuy} market={market} onRefresh={loadMarket} />
           )}
           {tab === "payment" && (
             <PaymentTab
@@ -690,10 +929,37 @@ export default function CarbonFarmer() {
               busy={payBusy} msg={payMsg} onSave={savePayment}
             />
           )}
+          {tab === "vehicle" && (
+            <VehicleTab
+              user={user}
+              api={api}
+              vehicles={vehicles}
+              setVehicles={setVehicles}
+              documents={documents}
+              setDocuments={setDocuments}
+              licences={licences}
+              setLicences={setLicences}
+            />
+          )}
         </main>
 
         {activeBuy && (
           <PaymentModal listing={activeBuy} buyer={user} onClose={() => setActiveBuy(null)} />
+        )}
+        {verifyState && verifyState.mode === "profile" && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 overflow-y-auto" onClick={() => setVerifyState(null)}>
+            <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md my-8">
+              <VerifyScreen
+                state={verifyState}
+                busy={verifyBusy}
+                msg={verifyMsg}
+                onResend={verifyResend}
+                onVerify={verifyChannel}
+                onDone={verifyDone}
+                onBack={() => setVerifyState(null)}
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -710,23 +976,61 @@ function AuthScreen({ mode, setMode, form, error, busy, onSubmit, onDemoLogin }:
   onSubmit: (e: React.FormEvent) => void;
   onDemoLogin: () => void;
 }) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-800 via-emerald-700 to-teal-800 p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
-          <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-6 text-white">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center"><Leaf className="w-7 h-7" /></div>
-              <div>
-                <h1 className="text-xl font-black">Kisan Carbon Hub</h1>
-                <p className="text-green-100 text-xs">Earn money by saving the planet</p>
+return (
+    <div className="min-h-screen relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-green-950 via-emerald-900 to-teal-900 p-4">
+      <div className="absolute -top-28 -left-28 w-[26rem] h-[26rem] bg-green-500/20 rounded-full blur-3xl" />
+      <div className="absolute -bottom-36 -right-24 w-[30rem] h-[30rem] bg-emerald-500/15 rounded-full blur-3xl" />
+      <div className="absolute top-1/4 right-10 w-44 h-44 bg-amber-400/10 rounded-full blur-2xl animate-pulse" />
+
+      <div className="relative z-10 w-full max-w-4xl">
+        <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden lg:grid lg:grid-cols-2">
+          <div className="hidden lg:flex flex-col justify-between p-10 bg-gradient-to-br from-green-600 via-emerald-600 to-teal-700 text-white relative overflow-hidden">
+            <div className="absolute inset-0 opacity-15" style={{ backgroundImage: "radial-gradient(circle at 20% 25%, rgba(255,255,255,.5) 0 1.5px, transparent 1.6px), radial-gradient(circle at 75% 70%, rgba(255,255,255,.35) 0 1.5px, transparent 1.6px)", backgroundSize: "28px 28px" }} />
+            <div className="relative">
+              <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center mb-6 border border-white/20">
+                <Leaf className="w-9 h-9" />
+              </div>
+              <h2 className="text-[1.7rem] leading-snug font-black">Farmers earn real money by saving the planet 🌾</h2>
+              <p className="mt-3 text-green-100 text-sm leading-relaxed">
+                Measure your land &amp; trees with satellite imagery, earn certified carbon credits, and sell them on the live digital marketplace.
+              </p>
+              <div className="mt-8 space-y-3">
+                {[
+                  { icon: Landmark, text: "Register your farmland — completely free" },
+                  { icon: Satellite, text: "Estimate credits directly from satellite data" },
+                  { icon: Wallet, text: "Sell credits & get paid in Rupees" },
+                  { icon: TrendingUp, text: "Live market pricing, updated every 10 min" },
+                ].map((f) => (
+                  <div key={f.text} className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-white/15 rounded-xl flex items-center justify-center shrink-0">
+                      <f.icon className="w-5 h-5" />
+                    </div>
+                    <p className="text-sm">{f.text}</p>
+                  </div>
+                ))}
               </div>
             </div>
-            <Link href="/" className="text-[11px] text-green-100 underline">← Back to home</Link>
+            <div className="relative flex items-center gap-2 text-green-100 text-xs">
+              <Info className="w-4 h-4 shrink-0" />
+              <span>1 carbon credit = 1 tonne CO₂ saved. Prices follow the live digital market.</span>
+            </div>
           </div>
 
-          <div className="p-6">
-            <div className="flex bg-green-50 rounded-xl p-1 mb-5">
+          <div className="p-6 sm:p-10">
+            <div className="lg:hidden flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2.5">
+                <div className="w-11 h-11 bg-gradient-to-br from-green-600 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-green-500/30">
+                  <Leaf className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <p className="font-black text-gray-900 leading-tight">Kisan Carbon Hub</p>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-widest">Farmer Credit Hub</p>
+                </div>
+              </div>
+              <Link href="/" className="text-xs text-green-700 font-semibold underline">← Home</Link>
+            </div>
+
+            <div className="flex bg-green-50 rounded-xl p-1 mb-6">
               <button onClick={() => setMode("register")} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${mode === "register" ? "bg-green-600 text-white shadow" : "text-green-700"}`}>Register</button>
               <button onClick={() => setMode("login")} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${mode === "login" ? "bg-green-600 text-white shadow" : "text-green-700"}`}>Login</button>
             </div>
@@ -756,17 +1060,17 @@ function AuthScreen({ mode, setMode, form, error, busy, onSubmit, onDemoLogin }:
               <button
                 onClick={onDemoLogin}
                 disabled={busy}
-                className="w-full bg-amber-400 hover:bg-amber-500 text-amber-900 font-bold py-3 rounded-xl shadow-lg shadow-amber-500/30 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                className="w-full bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-amber-950 font-bold py-3 rounded-xl shadow-lg shadow-amber-500/40 transition-all disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 <Sprout className="w-4 h-4" /> Login with Demo Farmer
               </button>
             </div>
 
             {mode === "register" && (
-              <div className="mt-4 bg-green-50 rounded-xl p-3 text-xs text-green-700 space-y-1">
+              <div className="mt-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-3 text-xs text-green-800 space-y-1">
                 <p><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Register your farmland free</p>
                 <p><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Estimate carbon credits from satellite</p>
-                <p><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Convert credits into Rupees & sell</p>
+                <p><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Convert credits into Rupees &amp; sell</p>
               </div>
             )}
           </div>
@@ -776,24 +1080,154 @@ function AuthScreen({ mode, setMode, form, error, busy, onSubmit, onDemoLogin }:
   );
 }
 
-function Field({ icon: Icon, ...props }: any) {
+/* ================= VERIFY SCREEN ================= */
+function VerifyRow({ label, value, devOtp, ok, busy, code, setCode, onSend, onVerify }: {
+  label: string;
+  value: string;
+  devOtp?: string;
+  ok: boolean;
+  busy: boolean;
+  code: string;
+  setCode: (c: string) => void;
+  onSend: () => void;
+  onVerify: () => void;
+}) {
+  return (
+    <div className={`rounded-xl border p-3 ${ok ? "border-green-200 bg-green-50" : "border-gray-200 bg-white"}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1.5">
+            {ok ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <AlertCircle className="w-4 h-4 text-amber-500" />}
+            {label} verified
+          </p>
+          <p className="text-sm text-gray-600 font-semibold truncate mt-0.5">{value}</p>
+        </div>
+      </div>
+      {!ok && (
+        <div className="mt-2 space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="Enter 6-digit OTP"
+              inputMode="numeric"
+              className="flex-1 w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm font-bold tracking-widest"
+            />
+            <button onClick={onVerify} disabled={busy || code.length !== 6}
+              className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-2 rounded-lg disabled:opacity-50 shrink-0">
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Verify
+            </button>
+          </div>
+          <button onClick={onSend} disabled={busy} className="text-xs text-green-700 font-semibold underline disabled:opacity-50">Resend OTP</button>
+          {devOtp && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5 flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 shrink-0" />
+              <span><b>DEV MODE:</b> your OTP is <b className="tracking-widest">{devOtp}</b> (shown for testing)</span>
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VerifyScreen({ state, busy, msg, onResend, onVerify, onDone, onBack }: {
+  state: VerifyState;
+  busy: "email" | "phone" | "done" | null;
+  msg: { ok: boolean; text: string } | null;
+  onResend: (t: "email" | "phone") => void;
+  onVerify: (t: "email" | "phone", code: string) => void;
+  onDone: () => void;
+  onBack?: () => void;
+}) {
+  const [emailCode, setEmailCode] = useState("");
+  const [phoneCode, setPhoneCode] = useState("");
+  const done = state.emailOk && state.phoneOk;
+  return (
+    <div className="min-h-screen relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-green-950 via-emerald-900 to-teal-900 p-4">
+      <div className="absolute -top-24 -right-24 w-[24rem] h-[24rem] bg-green-500/20 rounded-full blur-3xl" />
+      <div className="absolute -bottom-32 -left-20 w-[26rem] h-[26rem] bg-amber-400/10 rounded-full blur-3xl" />
+      <div className="relative z-10 w-full max-w-md">
+        <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden">
+          <div className="bg-gradient-to-br from-green-600 via-emerald-600 to-teal-700 p-6 text-white relative overflow-hidden">
+            <div className="absolute inset-0 opacity-15" style={{ backgroundImage: "radial-gradient(circle at 20% 30%, rgba(255,255,255,.5) 0 1.5px, transparent 1.6px)", backgroundSize: "22px 22px" }} />
+            <div className="relative flex items-center gap-3 mb-3">
+              <div className="w-11 h-11 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur"><Shield className="w-7 h-7" /></div>
+              <div>
+                <h1 className="text-xl font-black">Verify your account</h1>
+                <p className="text-green-100 text-xs">Confirm your email &amp; phone number with the OTPs we sent.</p>
+              </div>
+            </div>
+            {onBack && <button onClick={onBack} className="relative text-[11px] text-green-100 underline">← Back to login</button>}
+          </div>
+
+          <div className="p-6 space-y-3">
+            <VerifyRow label="Email" value={state.email} devOtp={state.devEmail} ok={state.emailOk} busy={busy === "email"} code={emailCode} setCode={setEmailCode} onSend={() => onResend("email")} onVerify={() => onVerify("email", emailCode)} />
+            <VerifyRow label="Phone" value={state.phone} devOtp={state.devPhone} ok={state.phoneOk} busy={busy === "phone"} code={phoneCode} setCode={setPhoneCode} onSend={() => onResend("phone")} onVerify={() => onVerify("phone", phoneCode)} />
+
+            {msg && (
+              <p className={`text-sm p-2 rounded-lg ${msg.ok ? "text-green-700 bg-green-50" : "text-red-600 bg-red-50"}`}>{msg.text}</p>
+            )}
+
+            <button onClick={onDone} disabled={!done || busy === "done"}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-green-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+              {busy === "done" ? <><Loader2 className="w-4 h-4 animate-spin" /> Logging in…</> : done ? "Verify & Continue" : "Verify both to continue"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ icon: Icon, set, ...props }: any) {
   return (
     <div className="relative">
       <Icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-      <input {...props} className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm" />
+      <input
+        {...props}
+        value={props.value ?? ""}
+        onChange={set ? (e: React.ChangeEvent<HTMLInputElement>) => set(e.target.value) : undefined}
+        className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
+      />
     </div>
   );
 }
 
 /* ================= OVERVIEW ================= */
-function Overview({ user, stats, lands, trees, onGo }: { user: AuthUser; stats: Stats | null; lands: Land[]; trees: Tree[]; onGo: (t: any) => void }) {
+function Overview({ user, stats, lands, trees, market, onGo }: { user: AuthUser; stats: Stats | null; lands: Land[]; trees: Tree[]; market: MarketInfo | null; onGo: (t: any) => void }) {
   const totalCredits = stats?.totalCredits || 0;
   const totalValue = stats?.totalValueINR || 0;
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-black text-gray-800">Welcome back, {user.name.split(" ")[0]}! 🌱</h1>
-        <p className="text-gray-500 text-sm">Here's how your land is helping fight climate change.</p>
+      <div className="bg-gradient-to-r from-green-700 via-emerald-700 to-teal-700 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 30%, rgba(255,255,255,.6) 0 1.5px, transparent 1.6px)", backgroundSize: "26px 26px" }} />
+        <div className="relative flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+          <div>
+            <p className="text-green-200 text-[11px] font-bold uppercase tracking-[0.2em]">
+              {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            </p>
+            <h1 className="text-2xl lg:text-3xl font-black mt-1">Welcome back, {user.name.split(" ")[0]} 🌾</h1>
+            <p className="text-green-100 text-sm mt-1">Here's how your land is helping fight climate change.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="bg-white/10 backdrop-blur rounded-xl px-4 py-2.5 text-sm font-bold border border-white/20">
+              {market ? (
+                <>
+                  ₹{market.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}/credit
+                  <span className={`ml-2 text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5 ${market.live ? "bg-green-400/30 text-green-100" : "bg-white/10 text-green-100"}`}>
+                    {market.live ? "● Live market" : "● Cached"}
+                  </span>
+                </>
+              ) : (
+                <>Market loading…</>
+              )}
+            </div>
+            <button onClick={() => onGo("market")} className="bg-white text-green-700 font-bold px-5 py-2.5 rounded-xl shadow-lg hover:-translate-y-0.5 hover:shadow-xl transition-all">
+              Sell credits →
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -803,8 +1237,10 @@ function Overview({ user, stats, lands, trees, onGo }: { user: AuthUser; stats: 
         <StatCard icon={Wallet} label="Potential Earnings" value={`₹${Math.round(totalValue).toLocaleString('en-IN')}`} color="amber" />
       </div>
 
-      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-6 text-white shadow-xl">
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 80% 20%, rgba(255,255,255,.6) 0 1.5px, transparent 1.6px), radial-gradient(circle at 30% 90%, rgba(255,255,255,.4) 0 1.5px, transparent 1.6px)", backgroundSize: "24px 24px" }} />
+        <div className="absolute -right-8 -top-8 w-40 h-40 bg-white/10 rounded-full blur-2xl" />
+        <div className="relative flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
           <div>
             <p className="text-green-100 text-sm">Total carbon you can earn from</p>
             <p className="text-3xl font-black mt-1">₹{Math.round(totalValue).toLocaleString('en-IN')}</p>
@@ -836,7 +1272,7 @@ function Overview({ user, stats, lands, trees, onGo }: { user: AuthUser; stats: 
                   </div>
                   <div className="text-right">
                     <p className="font-bold text-green-700">{l.estTotalCredits.toFixed(1)} t</p>
-                    <p className="text-xs text-gray-500">₹{Math.round(l.estValueINR).toLocaleString('en-IN')}</p>
+                    <p className="text-xs text-gray-500">₹{Math.round(l.estTotalCredits * CREDIT_PRICE_INR).toLocaleString('en-IN')}</p>
                   </div>
                 </div>
               ))}
@@ -854,7 +1290,21 @@ function Overview({ user, stats, lands, trees, onGo }: { user: AuthUser; stats: 
           </div>
           <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 flex items-start gap-2">
             <Info className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>1 carbon credit = 1 tonne CO2. Current price ≈ ₹{1800}/credit. Prices vary by market.</span>
+            <span className="flex-1">
+              1 carbon credit = 1 tonne CO2.{" "}
+              {market ? (
+                <span className="inline-flex flex-wrap items-center gap-1.5 align-middle">
+                  <b className="text-amber-900">₹{market.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}/credit</b>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wide ${market.live ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-600"}`}>
+                    {market.live ? "● Live digital market" : "● Offline (cached)"}
+                  </span>
+                  {market.token && <span className="opacity-70">via {market.token}</span>}
+                  <span className="opacity-60">updated {market.fetchedAt}</span>
+                </span>
+              ) : (
+                <>Current price ≈ ₹{DEFAULT_CREDIT_PRICE_INR}/credit. Prices vary by market.</>
+              )}
+            </span>
           </div>
         </div>
       </div>
@@ -864,24 +1314,28 @@ function Overview({ user, stats, lands, trees, onGo }: { user: AuthUser; stats: 
 
 function StatCard({ icon: Icon, label, value, suffix, color }: any) {
   const colors: any = {
-    green: "bg-green-100 text-green-600",
-    emerald: "bg-emerald-100 text-emerald-600",
-    teal: "bg-teal-100 text-teal-600",
-    amber: "bg-amber-100 text-amber-600",
+    green: "from-green-500 to-emerald-500 shadow-green-500/30",
+    emerald: "from-emerald-500 to-teal-500 shadow-emerald-500/30",
+    teal: "from-teal-500 to-cyan-500 shadow-teal-500/30",
+    amber: "from-amber-400 to-orange-500 shadow-amber-500/30",
   };
   return (
-    <div className="bg-white rounded-2xl shadow-lg border border-green-100 p-4">
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colors[color]}`}><Icon className="w-5 h-5" /></div>
-      <p className="text-2xl font-black text-gray-800 mt-2">{value}{suffix}</p>
-      <p className="text-xs text-gray-500">{label}</p>
+    <div className="bg-white rounded-2xl shadow-lg border border-green-100 p-4 hover:-translate-y-1 hover:shadow-xl transition-all duration-300">
+      <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[color]} shadow-lg flex items-center justify-center text-white`}>
+        <Icon className="w-5 h-5" />
+      </div>
+      <p className="text-2xl font-black text-gray-800 mt-2 tracking-tight">{value}{suffix}</p>
+      <p className="text-xs text-gray-500 mt-0.5">{label}</p>
     </div>
   );
 }
 
 function QuickAction({ icon: Icon, label, onClick }: any) {
   return (
-    <button onClick={onClick} className="flex flex-col items-center gap-2 p-4 bg-green-50 hover:bg-green-100 rounded-xl transition-colors">
-      <Icon className="w-6 h-6 text-green-600" />
+    <button onClick={onClick} className="flex flex-col items-center gap-2 p-4 bg-gradient-to-br from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 hover:-translate-y-0.5 rounded-xl transition-all duration-300 border border-green-100/70">
+      <div className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center">
+        <Icon className="w-5 h-5 text-green-600" />
+      </div>
       <span className="text-xs font-bold text-gray-700 text-center">{label}</span>
     </button>
   );
@@ -1404,7 +1858,7 @@ function TreesTab({ trees, showForm, setShowForm, species, setSpecies, age, setA
                 <p className="text-xs text-gray-500">{t.ageYears} yrs · {t.heightM} m {t.locationName && "· 📍" + t.locationName}</p>
                 <div className="flex justify-between mt-3 text-sm bg-green-50 rounded-lg p-2">
                   <span className="text-gray-600 font-medium">CO2: <b>{t.estCO2Kg.toFixed(0)} kg</b></span>
-                  <span className="text-green-600 font-bold">₹{Math.round(t.estValueINR).toLocaleString('en-IN')}</span>
+                  <span className="text-green-600 font-bold">₹{Math.round((t.estCO2Kg / 1000) * CREDIT_PRICE_INR).toLocaleString('en-IN')}</span>
                 </div>
               </div>
             </div>
@@ -1416,7 +1870,7 @@ function TreesTab({ trees, showForm, setShowForm, species, setSpecies, age, setA
 }
 
 /* ================= MARKET ================= */
-function MarketTab({ listings, showForm, setShowForm, title, setTitle, credits, setCredits, price, setPrice, landId, setLandId, lands, busy, msg, onSubmit, user, onBuy }: {
+function MarketTab({ listings, showForm, setShowForm, title, setTitle, credits, setCredits, price, setPrice, landId, setLandId, lands, busy, msg, onSubmit, user, onBuy, market, onRefresh }: {
   listings: Listing[];
   showForm: boolean;
   setShowForm: (v: boolean) => void;
@@ -1434,6 +1888,8 @@ function MarketTab({ listings, showForm, setShowForm, title, setTitle, credits, 
   onSubmit: (e: React.FormEvent) => void;
   user: AuthUser;
   onBuy: (l: Listing) => void;
+  market?: MarketInfo | null;
+  onRefresh?: () => void;
 }) {
   return (
     <div className="space-y-5">
@@ -1442,14 +1898,24 @@ function MarketTab({ listings, showForm, setShowForm, title, setTitle, credits, 
           <h1 className="text-2xl font-black text-gray-800">Carbon Credit Marketplace</h1>
           <p className="text-gray-500 text-sm">Buy and sell verified carbon credits</p>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-green-500/30">
-          <Store className="w-4 h-4" /> List Credits
-        </button>
+        <div className="flex items-center gap-2">
+          {!!onRefresh && (
+            <button onClick={onRefresh} title="Refresh live market rate"
+              className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-2 rounded-xl border border-green-200 text-green-700 bg-white hover:bg-green-50">
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh rate
+            </button>
+          )}
+          <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-green-500/30">
+            <Store className="w-4 h-4" /> List Credits
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-lg border border-green-100 p-5">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-          <MarketStat label="Live Price" value="₹1,800" sub="per credit" color="text-green-600" />
+          <MarketStat label="Live Price" value={`₹${CREDIT_PRICE_INR.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
+            sub={market ? `${market.live ? "● Live" : "● Offline (cached)"} · ${market.fetchedAt}` : "per credit"}
+            color={market && !market.live ? "text-gray-500" : "text-green-600"} />
           <MarketStat label="Total Listed" value={listings.length} sub="listings" color="text-gray-800" />
           <MarketStat label="Credits Listed" value={creditsCount(listings)} sub="tCO2e" color="text-teal-600" />
           <MarketStat label="Market Size" value={`₹${marketSize(listings).toLocaleString('en-IN')}`} sub="value" color="text-amber-600" />
@@ -1753,6 +2219,417 @@ function PaymentModal({ listing, buyer, onClose }: { listing: Listing; buyer: Au
             I&apos;ve Made the Payment
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VehicleTab({ user, api, vehicles, setVehicles, documents, setDocuments, licences, setLicences }: {
+  user: AuthUser;
+  api: (path: string, options?: RequestInit) => Promise<Response>;
+  vehicles: Vehicle[];
+  setVehicles: (v: Vehicle[]) => void;
+  documents: Documents | null;
+  setDocuments: (d: Documents | null) => void;
+  licences: Licence[];
+  setLicences: (l: Licence[]) => void;
+}) {
+  // Documents state
+  const [aadharNum, setAadharNum] = useState(documents?.aadharNumber || "");
+  const [aadharImg, setAadharImg] = useState<string | null>(documents?.aadharImage || null);
+  const [dlNum, setDlNum] = useState(documents?.dlNumber || "");
+  const [dlImg, setDlImg] = useState<string | null>(documents?.dlImage || null);
+  const [docBusy, setDocBusy] = useState(false);
+  const [docMsg, setDocMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Add vehicle state
+  const [vShow, setVShow] = useState(false);
+  const [vTypeKey, setVTypeKey] = useState("car_petrol");
+  const [vName, setVName] = useState("");
+  const [vMake, setVMake] = useState("");
+  const [vModel, setVModel] = useState("");
+  const [vReg, setVReg] = useState("");
+  const [vYear, setVYear] = useState("");
+  const [vBusy, setVBusy] = useState(false);
+  const [vMsg, setVMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Trip state
+  const [tripVehicleId, setTripVehicleId] = useState<string | null>(null);
+  const [tripDate, setTripDate] = useState("");
+  const [tripKm, setTripKm] = useState("");
+  const [tripRoute, setTripRoute] = useState("");
+  const [tripBusy, setTripBusy] = useState(false);
+  const [tripMsg, setTripMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Catalog search
+  const [catQuery, setCatQuery] = useState("");
+
+  // Licence
+  const [licBusy, setLicBusy] = useState(false);
+  const [licMsg, setLicMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const readFile = (file: File, cb: (b64: string) => void) => {
+    const reader = new FileReader();
+    reader.onload = () => cb(String(reader.result));
+    reader.readAsDataURL(file);
+  };
+
+  const saveDocuments = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDocBusy(true);
+    setDocMsg(null);
+    const body: any = {};
+    if (aadharNum) body.aadharNumber = aadharNum.trim();
+    if (aadharImg) body.aadharImage = aadharImg;
+    if (dlNum) body.dlNumber = dlNum.trim();
+    if (dlImg) body.dlImage = dlImg;
+    try {
+      const res = await api("/api/documents", { method: "PUT", body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) { setDocMsg({ ok: false, text: data.error || "Failed to save" }); return; }
+      setDocuments(data.documents);
+      setDocMsg({ ok: true, text: "Documents saved successfully" });
+    } catch {
+      setDocMsg({ ok: false, text: "Network error" });
+    } finally {
+      setDocBusy(false);
+    }
+  };
+
+  const addVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vName.trim()) { setVMsg({ ok: false, text: "Enter a name for the vehicle" }); return; }
+    setVBusy(true); setVMsg(null);
+    const vt = VEHICLE_TYPE_MAP[vTypeKey];
+    try {
+      const res = await api("/api/vehicles", {
+        method: "POST",
+        body: JSON.stringify({
+          name: vName.trim(), category: vt.category, fuel: vt.fuel,
+          make: vMake.trim() || vName.trim(), model: vModel.trim(),
+          regNumber: vReg.trim(), year: vYear ? Number(vYear) : undefined, typeKey: vTypeKey,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setVMsg({ ok: false, text: data.error || "Failed to add" }); return; }
+      setVehicles([data.vehicle, ...vehicles]);
+      setVMsg({ ok: true, text: `${data.vehicle.name} added` });
+      setVShow(false); setVName(""); setVMake(""); setVModel(""); setVReg(""); setVYear("");
+    } catch {
+      setVMsg({ ok: false, text: "Network error" });
+    } finally {
+      setVBusy(false);
+    }
+  };
+
+  const deleteVehicle = async (id: string) => {
+    const res = await api(`/api/vehicles/${id}`, { method: "DELETE" });
+    if (res.ok) setVehicles(vehicles.filter((v) => v.id !== id));
+  };
+
+  const addTrip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tripVehicleId || !tripKm || Number(tripKm) <= 0) {
+      setTripMsg({ ok: false, text: "Pick a vehicle and a valid distance" }); return;
+    }
+    setTripBusy(true); setTripMsg(null);
+    try {
+      const res = await api(`/api/vehicles/${tripVehicleId}/trips`, {
+        method: "POST",
+        body: JSON.stringify({ date: tripDate || new Date().toISOString(), distanceKm: Number(tripKm), routeName: tripRoute.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTripMsg({ ok: false, text: data.error || "Failed" }); return; }
+      setVehicles(vehicles.map((v) => v.id === tripVehicleId ? { ...v, trips: [data.trip, ...(v.trips || [])] } : v));
+      setTripMsg({ ok: true, text: "Trip logged" });
+      setTripKm(""); setTripRoute("");
+    } catch {
+      setTripMsg({ ok: false, text: "Network error" });
+    } finally {
+      setTripBusy(false);
+    }
+  };
+
+  const deleteTrip = async (vehicleId: string, tripId: string) => {
+    const res = await api(`/api/trips/${tripId}`, { method: "DELETE" });
+    if (res.ok) {
+      setVehicles(vehicles.map((v) => v.id === vehicleId ? { ...v, trips: (v.trips || []).filter((t) => t.id !== tripId) } : v));
+    }
+  };
+
+  const buyLicence = async () => {
+    const fleetKg = vehicles.reduce((s, v) => s + (v.trips || []).reduce((a, t) => a + t.emissionKg, 0), 0);
+    if (fleetKg <= 0) { setLicMsg({ ok: false, text: "No logged trips yet — add trips to your vehicles first" }); return; }
+    setLicBusy(true); setLicMsg(null);
+    try {
+      const res = await api("/api/licence", {
+        method: "POST",
+        body: JSON.stringify({ co2OffsetKg: fleetKg }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setLicMsg({ ok: false, text: data.error || "Failed" }); return; }
+      setLicences([data.licence, ...licences]);
+      setLicMsg({ ok: true, text: `Carbon licence purchased — ₹${Math.round(data.licence.totalValueINR).toLocaleString("en-IN")} (${data.licence.credits.toFixed(2)} credits)` });
+    } catch {
+      setLicMsg({ ok: false, text: "Network error" });
+    } finally {
+      setLicBusy(false);
+    }
+  };
+
+  const fleetKg = vehicles.reduce((s, v) => s + (v.trips || []).reduce((a, t) => a + t.emissionKg, 0), 0);
+  const fleetKms = vehicles.reduce((s, v) => s + (v.trips || []).reduce((a, t) => a + t.distanceKm, 0), 0);
+  const licCost = Math.ceil(fleetKg / 1000) * CREDIT_PRICE_INR;
+  const catResults = searchVehicleCatalog(catQuery);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-black text-gray-800 flex items-center gap-2"><Car className="w-6 h-6 text-green-600" /> Vehicles &amp; Pollution</h1>
+        <p className="text-gray-500 text-sm">Register your ID documents, log vehicle travel, track pollution, and buy carbon licences.</p>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
+          <p className="text-[10px] uppercase tracking-widest text-gray-400 flex items-center gap-1"><Car className="w-3 h-3" /> Vehicles</p>
+          <p className="text-2xl font-black text-gray-800 mt-1">{vehicles.length}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
+          <p className="text-[10px] uppercase tracking-widest text-gray-400 flex items-center gap-1"><Wind className="w-3 h-3" /> CO2 logged</p>
+          <p className="text-2xl font-black text-gray-800 mt-1">{(fleetKg / 1000).toFixed(2)} <span className="text-sm font-bold text-gray-500">t</span></p>
+        </div>
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
+          <p className="text-[10px] uppercase tracking-widest text-gray-400 flex items-center gap-1"><History className="w-3 h-3" /> Kms logged</p>
+          <p className="text-2xl font-black text-gray-800 mt-1">{Math.round(fleetKms).toLocaleString("en-IN")}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
+          <p className="text-[10px] uppercase tracking-widest text-gray-400 flex items-center gap-1"><Shield className="w-3 h-3" /> Licences</p>
+          <p className="text-2xl font-black text-gray-800 mt-1">{licences.length}</p>
+        </div>
+      </div>
+
+      {/* Documents */}
+      <div className="bg-white rounded-2xl shadow-sm border border-green-100 p-5">
+        <h3 className="font-black text-gray-800 flex items-center gap-2 mb-1"><Contact className="w-5 h-5 text-green-600" /> Identity Documents</h3>
+        <p className="text-xs text-gray-500 mb-4">Upload your Aadhaar card and Driving Licence to register for vehicle pollution tracking.</p>
+        <form onSubmit={saveDocuments} className="grid md:grid-cols-2 gap-4">
+          <div className="border border-gray-200 rounded-2xl p-4 space-y-3">
+            <p className="font-bold text-sm text-gray-700 flex items-center gap-2"><Contact className="w-4 h-4 text-green-600" /> Aadhaar Card</p>
+            <input value={aadharNum} onChange={(e) => setAadharNum(e.target.value.replace(/\D/g, "").slice(0, 12))}
+              placeholder="12-digit Aadhaar number" className="input" inputMode="numeric" />
+            <label className="block cursor-pointer">
+              <span className="input text-center block py-2.5 text-green-700 font-bold text-xs bg-green-50 hover:bg-green-100 rounded-xl">
+                {aadharImg ? "Change Aadhaar photo" : "Upload Aadhaar photo"}
+              </span>
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setAadharImg)} />
+            </label>
+            {aadharImg && <img src={aadharImg} alt="Aadhaar" className="max-h-32 rounded-xl object-cover border" />}
+          </div>
+          <div className="border border-gray-200 rounded-2xl p-4 space-y-3">
+            <p className="font-bold text-sm text-gray-700 flex items-center gap-2"><ScrollText className="w-4 h-4 text-green-600" /> Driving Licence</p>
+            <input value={dlNum} onChange={(e) => setDlNum(e.target.value)} placeholder="Driving Licence number" className="input" />
+            <label className="block cursor-pointer">
+              <span className="input text-center block py-2.5 text-green-700 font-bold text-xs bg-green-50 hover:bg-green-100 rounded-xl">
+                {dlImg ? "Change Licence photo" : "Upload Licence photo"}
+              </span>
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setDlImg)} />
+            </label>
+            {dlImg && <img src={dlImg} alt="Licence" className="max-h-32 rounded-xl object-cover border" />}
+          </div>
+          <div className="md:col-span-2 flex items-center justify-between">
+            {docMsg && <p className={`text-sm font-semibold ${docMsg.ok ? "text-green-600" : "text-red-600"}`}>{docMsg.text}</p>}
+            <button disabled={docBusy} className="ml-auto bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-2">
+              {docBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save Documents
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Add vehicle + list */}
+      <div className="bg-white rounded-2xl shadow-sm border border-green-100 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-black text-gray-800 flex items-center gap-2"><Car className="w-5 h-5 text-green-600" /> My Vehicles ({vehicles.length})</h3>
+          <button onClick={() => setVShow(!vShow)} className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold ${vShow ? "bg-gray-200 text-gray-700" : "bg-green-600 text-white"}`}>
+            <Plus className="w-3.5 h-3.5" /> {vShow ? "Cancel" : "Add Vehicle"}
+          </button>
+        </div>
+
+        {vShow && (
+          <form onSubmit={addVehicle} className="grid md:grid-cols-2 gap-3 bg-green-50 rounded-2xl p-4 mb-4">
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-600 block mb-1">Vehicle Type</label>
+              <select value={vTypeKey} onChange={(e) => setVTypeKey(e.target.value)} className="input">
+                {VEHICLE_TYPES.map((vt) => <option key={vt.key} value={vt.key}>{vt.label} — {vt.emissionGPerKm} g/km</option>)}
+              </select>
+            </div>
+            <input value={vName} onChange={(e) => setVName(e.target.value)} placeholder="Name (e.g. My Bike)" className="input" />
+            <input value={vReg} onChange={(e) => setVReg(e.target.value)} placeholder="Registration number (optional)" className="input" />
+            <input value={vMake} onChange={(e) => setVMake(e.target.value)} placeholder="Make (e.g. Hero, Tata)" className="input" />
+            <input value={vModel} onChange={(e) => setVModel(e.target.value)} placeholder="Model (e.g. Splendor, Nexon)" className="input" />
+            <input value={vYear} onChange={(e) => setVYear(e.target.value)} placeholder="Year (optional)" className="input" inputMode="numeric" />
+            <div className="md:col-span-2 flex items-center gap-3">
+              {vMsg && <p className={`text-sm font-semibold ${vMsg.ok ? "text-green-600" : "text-red-600"}`}>{vMsg.text}</p>}
+              <button disabled={vBusy} className="ml-auto bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-2">
+                {vBusy && <Loader2 className="w-4 h-4 animate-spin" />} Add Vehicle
+              </button>
+            </div>
+          </form>
+        )}
+
+        {vMsg && !vShow && <p className={`mb-3 text-sm font-semibold ${vMsg.ok ? "text-green-600" : "text-red-600"}`}>{vMsg.text}</p>}
+
+        <div className="space-y-3">
+          {vehicles.length === 0 && (
+            <div className="text-center py-10 text-gray-400">
+              <Car className="w-12 h-12 mx-auto opacity-40" />
+              <p className="text-sm mt-2">No vehicles yet. Add your vehicles to track pollution and carbon licences.</p>
+            </div>
+          )}
+          {vehicles.map((v) => {
+            const totalKg = (v.trips || []).reduce((a, t) => a + t.emissionKg, 0);
+            return (
+              <div key={v.id} className="border border-gray-200 rounded-2xl overflow-hidden">
+                <div className="flex items-center justify-between p-4 bg-white">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-xl bg-green-100 text-green-700 flex items-center justify-center">
+                      <Car className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="font-black text-gray-800">{v.name}</p>
+                      <p className="text-xs text-gray-500 flex items-center gap-1">
+                        {v.make}{v.model ? ` ${v.model}` : ""} • {CATEGORY_LABELS[v.category] || v.category} • {FUEL_LABELS[v.fuel] || v.fuel}
+                        {v.regNumber ? ` • ${v.regNumber}` : ""}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{v.emissionGPerKm} g CO2 / km</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-right mr-1">
+                      <p className="text-lg font-black text-red-600">{(totalKg / 1000).toFixed(2)} t</p>
+                      <p className="text-[10px] text-gray-400">CO2</p>
+                    </div>
+                    <button onClick={() => setTripVehicleId(tripVehicleId === v.id ? null : v.id)}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold ${tripVehicleId === v.id ? "bg-gray-200 text-gray-700" : "bg-blue-600 text-white"}`}>
+                      <History className="w-3.5 h-3.5 inline mr-1" />Trips
+                    </button>
+                    <button onClick={() => deleteVehicle(v.id)} className="p-2 rounded-xl text-red-500 hover:bg-red-50">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {tripVehicleId === v.id && (
+                  <div className="bg-gray-50 border-t border-gray-200 p-4">
+                    <form onSubmit={addTrip} className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+                      <input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} className="input" />
+                      <input value={tripKm} onChange={(e) => setTripKm(e.target.value)} placeholder="Distance (km)" className="input" inputMode="decimal" />
+                      <input value={tripRoute} onChange={(e) => setTripRoute(e.target.value)} placeholder="Route (e.g. Village → City)" className="input md:col-span-2" />
+                      <button disabled={tripBusy} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1">
+                        {tripBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Log Trip
+                      </button>
+                      {tripMsg && <p className={`col-span-2 md:col-span-5 text-sm font-semibold ${tripMsg.ok ? "text-green-600" : "text-red-600"}`}>{tripMsg.text}</p>}
+                    </form>
+                    <div className="max-h-56 overflow-y-auto space-y-1.5">
+                      {(v.trips || []).length === 0 && <p className="text-xs text-gray-400 text-center py-4">No trips logged yet.</p>}
+                      {(v.trips || []).map((t) => (
+                        <div key={t.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-gray-100">
+                          <div className="flex items-center gap-2 text-xs">
+                            <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                            <span className="font-semibold text-gray-700">{new Date(t.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                            <span className="text-gray-400">•</span>
+                            <span className="text-gray-700">{t.distanceKm} km</span>
+                            {t.routeName && <span className="text-gray-400">{t.routeName}</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-red-600">{(t.emissionKg / 1000).toFixed(3)} t</span>
+                            <button onClick={() => deleteTrip(v.id, t.id)} className="text-gray-400 hover:text-red-500">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Catalog search */}
+      <div className="bg-white rounded-2xl shadow-sm border border-green-100 p-5">
+        <h3 className="font-black text-gray-800 flex items-center gap-2 mb-1"><Search className="w-5 h-5 text-green-600" /> Vehicle Pollution Lookup</h3>
+        <p className="text-xs text-gray-500 mb-4">Search any vehicle by name, model or fuel to see how much CO2 it produces per km.</p>
+        <input value={catQuery} onChange={(e) => setCatQuery(e.target.value)} placeholder="Search e.g. 'SUV', 'CNG', 'scooter', 'truck'..." className="input mb-3" />
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-80 overflow-y-auto">
+          {catResults.map((vt) => (
+            <div key={vt.key} className="border border-gray-100 rounded-xl p-3 hover:border-green-300 transition-colors">
+              <p className="font-bold text-sm text-gray-800">{vt.label}</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">{vt.desc}</p>
+              <p className="text-xs mt-2 flex items-center justify-between">
+                <span className="text-gray-500">CO2 / km</span>
+                <span className="font-black text-red-600">{vt.emissionGPerKm} g</span>
+              </p>
+              <p className="text-[10px] text-gray-400">100 km trip ⇒ {(vt.emissionGPerKm * 100 / 1000).toFixed(2)} kg</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Carbon licence */}
+      <div className="bg-gradient-to-br from-green-700 to-emerald-600 rounded-2xl shadow-xl p-6 text-white">
+        <div className="flex items-center gap-2 mb-2">
+          <Shield className="w-6 h-6" />
+          <h3 className="font-black text-lg">Buy Carbon Licence</h3>
+        </div>
+        <p className="text-sm text-green-100 mb-4">
+          Offset the exact CO2 from your vehicles' logged travel. Your fleet has emitted{" "}
+          <span className="font-black text-white">{(fleetKg / 1000).toFixed(3)} tonnes</span> of CO2.
+        </p>
+        <div className="grid md:grid-cols-3 gap-3 mb-4">
+          <div className="bg-white/10 rounded-xl p-3">
+            <p className="text-[10px] uppercase tracking-widest text-green-200">CO2 to offset</p>
+            <p className="text-xl font-black">{(fleetKg / 1000).toFixed(3)} t</p>
+          </div>
+          <div className="bg-white/10 rounded-xl p-3">
+            <p className="text-[10px] uppercase tracking-widest text-green-200">Credits needed</p>
+            <p className="text-xl font-black">{Math.max(0.001, fleetKg / 1000).toFixed(2)}</p>
+          </div>
+          <div className="bg-white/10 rounded-xl p-3">
+            <p className="text-[10px] uppercase tracking-widest text-green-200">Licence cost (₹{CREDIT_PRICE_INR}/credit)</p>
+            <p className="text-xl font-black">₹{licCost.toLocaleString("en-IN")}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={buyLicence} disabled={licBusy}
+            className="bg-white text-green-700 hover:bg-green-50 disabled:opacity-50 font-black px-6 py-3 rounded-xl shadow-lg flex items-center gap-2">
+            {licBusy && <Loader2 className="w-4 h-4 animate-spin" />} <Shield className="w-4 h-4" /> Buy Licence
+          </button>
+          {licMsg && <p className={`text-sm font-semibold ${licMsg.ok ? "text-green-100" : "text-red-300"}`}>{licMsg.text}</p>}
+        </div>
+
+        {licences.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-white/20">
+            <p className="text-xs uppercase tracking-widest text-green-200 font-bold mb-2">Licence history</p>
+            <div className="space-y-2">
+              {licences.map((l) => (
+                <div key={l.id} className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-green-300" />
+                    <span className="font-bold">{l.credits.toFixed(2)} credits</span>
+                    <span className="text-xs text-green-200">offset {(l.co2OffsetKg / 1000).toFixed(3)} t CO2</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-black">₹{l.totalValueINR.toLocaleString("en-IN")}</span>
+                    <span className="text-[10px] text-green-200">{new Date(l.purchasedAt).toLocaleDateString("en-IN")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

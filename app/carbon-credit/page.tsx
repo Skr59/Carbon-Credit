@@ -22,7 +22,10 @@ import {
 import Link from "next/link";
 import dynamic from "next/dynamic";
 
-const MapInner = dynamic(() => import("./MapInner"), { ssr: false });
+const MapInner = dynamic(() => import("./MapInner"), {
+  ssr: false,
+  loading: () => <div className="w-full h-full min-h-[300px] bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center text-xs text-green-700 font-bold">Loading map…</div>,
+});
 
 interface LocationData {
   lat: number;
@@ -246,10 +249,12 @@ export default function CarbonCreditCalculator() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
-      <header className="bg-gradient-to-r from-green-700 via-emerald-600 to-teal-600 text-white py-6 px-4 shadow-xl">
-        <div className="max-w-7xl mx-auto">
+      <header className="bg-gradient-to-r from-green-700 via-emerald-600 to-teal-600 text-white py-6 px-4 shadow-xl relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 15% 30%, rgba(255,255,255,.6) 0 1.5px, transparent 1.6px), radial-gradient(circle at 80% 70%, rgba(255,255,255,.4) 0 1.5px, transparent 1.6px)", backgroundSize: "26px 26px" }} />
+        <div className="absolute -right-10 -top-10 w-48 h-48 bg-white/10 rounded-full blur-2xl" />
+        <div className="max-w-7xl mx-auto relative">
           <div className="flex items-center gap-3 mb-2">
-            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm">
+            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm border border-white/20">
               <Leaf className="w-7 h-7" />
             </div>
             <div className="flex-1">
@@ -262,7 +267,7 @@ export default function CarbonCreditCalculator() {
             </div>
             <Link
               href="/carbon-farmer"
-              className="hidden sm:inline-flex items-center gap-2 bg-amber-400 hover:bg-amber-500 text-green-900 font-bold text-sm px-4 py-2.5 rounded-xl shadow-lg transition-all hover:-translate-y-0.5"
+              className="hidden sm:inline-flex items-center gap-2 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-green-950 font-bold text-sm px-4 py-2.5 rounded-xl shadow-lg transition-all hover:-translate-y-0.5"
             >
               <Sprout className="w-4 h-4" /> Farmer Money Hub →
             </Link>

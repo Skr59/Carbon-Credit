@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { signToken } from "@/lib/auth";
+import { validateEmail, normalizePhone, createOtp } from "@/lib/otp";
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,6 +15,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!validateEmail(email)) {
+      return NextResponse.json({ error: "Please enter a valid email address" }, { status: 400 });
+    }
+
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      return NextResponse.json(
+        { error: "Please enter a valid 10-digit Indian mobile number" },
+        { status: 400 }
+      );
+    }
+
     if (password.length < 6) {
       return NextResponse.json(
         { error: "Password must be at least 6 characters" },
@@ -23,7 +35,7 @@ export async function POST(req: NextRequest) {
     }
 
     const existing = await prisma.user.findFirst({
-      where: { OR: [{ email }, { phone }] },
+      where: { OR: [{ email: email.trim() }, { phone: normalizedPhone }] },
     });
 
     if (existing) {
@@ -38,8 +50,8 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.create({
       data: {
         name,
-        email,
-        phone,
+        email: email.trim(),
+        phone: normalizedPhone,
         passwordHash,
         village,
         state,
@@ -47,32 +59,19 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const token = signToken(user);
+    const devEmail = await createOtp(user.id, "email", user.email);
+    const devPhone = await createOtp(user.id, "phone", user.phone);
 
-    const res = NextResponse.json(
+    return NextResponse.json(
       {
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          role: user.role,
-          village: user.village,
-          state: user.state,
-        },
-        token,
+        needsVerification: true,
+        email: user.email,
+        phone: user.phone,
+        devEmail,
+        devPhone,
       },
       { status: 201 }
     );
-
-    res.cookies.set("token", token, {
-      httpOnly: true,
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-      sameSite: "lax",
-    });
-
-    return res;
   } catch (err) {
     console.error("Register error:", err);
     return NextResponse.json({ error: "Failed to register. Please try again." }, { status: 500 });

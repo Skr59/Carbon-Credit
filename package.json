@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "set PORT=8080&& node .next/standalone/server.js",
     "gen": "prisma generate && prisma migrate deploy",
+    "postinstall": "prisma generate",
     "db:reset": "prisma migrate reset --force",
+    "setup:verify": "node scripts/verify-setup.mjs",
+    "admin:create": "node scripts/create-admin.mjs",
+    "seed:live": "node scripts/seed-live.mjs",
     "lint": "next lint"
   },
   "dependencies": {
@@ -19,6 +23,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.400.0",
     "next": "^14.2.35",
+    "nodemailer": "^10.0.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
