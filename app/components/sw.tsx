@@ -4,9 +4,14 @@ import { useEffect } from "react";
 
 export default function SwRegister() {
   useEffect(() => {
-    if ("serviceWorker" in navigator && (window.location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(window.location.hostname))) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
+      caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))));
+      return;
     }
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
   }, []);
   return null;
 }

@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: process.env.VERCEL ? undefined : "standalone",
+  output: process.env.VERCEL || process.env.NETLIFY ? undefined : "standalone",
   images: {
     unoptimized: true,
   },

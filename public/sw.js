@@ -1,4 +1,4 @@
-const CACHE = "kisan-carbon-v2";
+const CACHE = "kisan-carbon-v3";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -8,7 +8,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -17,6 +17,8 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET") return;
   if (url.origin !== location.origin) return;
+
+  if (url.pathname.startsWith("/_next/")) return;
 
   event.respondWith(
     fetch(event.request)
@@ -27,13 +29,8 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       })
-      .catch((err) => {
-        return (
-          caches.match(event.request).then((cached) => {
-            if (cached) return cached;
-            throw err;
-          })
-        );
-      })
+      .catch((err) =>
+        caches.match(event.request).then((cached) => cached || Promise.reject(err))
+      )
   );
 });

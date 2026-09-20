@@ -1187,7 +1187,7 @@ function Field({ icon: Icon, set, ...props }: any) {
       <input
         {...props}
         value={props.value ?? ""}
-        onChange={set ? (e: React.ChangeEvent<HTMLInputElement>) => set(e.target.value) : undefined}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => set && set(e.target.value)}
         className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
       />
     </div>
