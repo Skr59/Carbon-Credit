@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Leaf, Calculator, UserPlus, Shield, ArrowRight, BarChart3, Truck, Wallet } from "lucide-react";
+import { Leaf, Calculator, UserPlus, Shield, ArrowRight, BarChart3, Truck, Wallet, Plane } from "lucide-react";
 
 const TOOLS = [
   {
@@ -17,6 +17,14 @@ const TOOLS = [
     icon: Calculator,
     cta: "Open Calculator",
     color: "bg-emerald-600",
+  },
+  {
+    href: "/drone",
+    title: "Carbon Drone Survey",
+    desc: "Pair a survey drone with your laptop or phone, watch its live camera and plan field missions.",
+    icon: Plane,
+    cta: "Open Drone Command",
+    color: "bg-sky-600",
   },
   {
     href: "/admin",
@@ -81,7 +89,7 @@ export default function Home() {
 
       <section className="max-w-6xl mx-auto px-4 py-12">
         <h2 className="text-xl font-bold text-gray-900 mb-6">The platform</h2>
-        <div className="grid md:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
           {TOOLS.map((t) => (
             <Link
               key={t.href}
