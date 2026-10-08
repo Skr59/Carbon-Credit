@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
-import QRCode from "qrcode";
 import {
   Plane, Video, Wrench, Route, ArrowLeft, ArrowRight, Camera, Smartphone,
   MonitorSmartphone, Wifi, Bluetooth, Download, Play, Square, BatteryCharging,
@@ -105,68 +104,101 @@ function PairTab() {
   const [device, setDevice] = useState<"laptop" | "mobile">("laptop");
   const [connected, setConnected] = useState(false);
   const [bat, setBat] = useState(86);
-  const [qr, setQr] = useState<string | null>(null);
-
-  const pairingPayload =
-    device === "laptop"
-      ? "kisan-drone://pair?v=1&mode=wifi&ssid=FarmLink-2.4G&psk=KisanCarbon2026&chan=6"
-      : "kisan-drone://pair?v=1&mode=hotspot&ssid=KISAN-DRONE-5G&code=4837&chan=149";
+  const [method, setMethod] = useState<"wifi" | "usb" | "radio">("wifi");
 
   useEffect(() => {
-    let live = true;
-    setQr(null);
-    QRCode.toDataURL(pairingPayload, { width: 440, margin: 1, errorCorrectionLevel: "M" })
-      .then((u) => { if (live) setQr(u); })
-      .catch(() => { if (live) setQr(null); });
     const t = setInterval(() => setBat((b) => (b > 5 ? b - 1 : 86)), 20000);
     setConnected(false);
-    return () => { live = false; clearInterval(t); };
+    return () => clearInterval(t);
   }, [device]);
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <Wifi className="w-5 h-5 text-sky-600" /> Pair your drone
+          <Wifi className="w-5 h-5 text-sky-600" /> Connect with QGroundControl
         </h2>
-        <p className="text-sm text-gray-500 mt-1 mb-5">Choose the device that will control the drone, then scan the QR with the drone's camera or controller app.</p>
+        <p className="text-sm text-gray-500 mt-1">
+          The real way to control a DIY drone is the free <strong>QGroundControl (QGC)</strong> app.
+          Download it below, then pick a connection method.
+        </p>
 
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          <button
-            onClick={() => setDevice("laptop")}
-            className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-colors ${device === "laptop" ? "border-sky-600 bg-sky-50 text-sky-700" : "border-gray-200 hover:border-gray-300 text-gray-500"}`}
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <a
+            href={device === "laptop" ? "https://qgroundcontrol.com/downloads/" : "https://play.google.com/store/apps/details?id=org.mavlink.qgroundcontrol"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-colors hover:border-sky-400 ${device === "laptop" ? "border-sky-600 bg-sky-50 text-sky-700" : "border-emerald-600 bg-emerald-50 text-emerald-700"}`}
           >
             <MonitorSmartphone className="w-6 h-6" />
-            <span className="text-sm font-bold">Laptop</span>
-            <span className="text-xs text-gray-400">Wi-Fi mode 2.4GHz</span>
-          </button>
-          <button
-            onClick={() => setDevice("mobile")}
-            className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-colors ${device === "mobile" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "border-gray-200 hover:border-gray-300 text-gray-500"}`}
-          >
-            <Smartphone className="w-6 h-6" />
-            <span className="text-sm font-bold">Mobile</span>
-            <span className="text-xs text-gray-400">Hotspot mode 5GHz</span>
-          </button>
+            <span className="text-sm font-bold">{device === "laptop" ? "Laptop app" : "Phone app"}</span>
+            <span className="text-xs text-gray-400">{device === "laptop" ? "Windows / Mac / Linux" : "Android / iOS"}</span>
+            <span className="text-xs font-bold text-sky-600">Download QGroundControl →</span>
+          </a>
+          <div className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-gray-200 p-4">
+            <Signal className="w-6 h-6 text-gray-400" />
+            <span className="text-xs font-bold text-gray-500">Free &amp; open source</span>
+            <span className="text-xs text-gray-400">Works with thousands of drones</span>
+          </div>
         </div>
 
-        <div className="bg-gray-50 rounded-xl p-4 flex flex-col items-center">
-          {qr ? <img src={qr} alt="Pairing QR" width={220} height={220} className="bg-white rounded-lg" /> : (
-            <div className="w-[220px] h-[220px] bg-gray-100 rounded-lg flex items-center justify-center">
-              <Loader2 className="w-7 h-7 animate-spin text-gray-400" />
+        <div className="mt-5">
+          <p className="text-sm font-bold text-gray-900 mb-2">Connection method</p>
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {([["wifi", "WiFi"], ["usb", "USB cable"], ["radio", "Telemetry radio"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setMethod(key)}
+                className={`text-xs font-bold px-3 py-2 rounded-lg border-2 transition-colors ${method === key ? "border-sky-600 text-sky-700 bg-sky-50" : "border-gray-200 text-gray-500 hover:border-gray-300"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {method === "wifi" && (
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm text-gray-600">
+              <p className="text-base font-bold text-gray-900">WiFi — no cables needed</p>
+              <p><strong>1.</strong> Drone needs a WiFi-capable flight controller (or add a ₹300 ESP32). Power it — wait ~10s, it broadcasts its own network (like <span className="font-mono text-xs bg-gray-200 px-1 rounded">pixhawk_1234</span>).</p>
+              <p><strong>2.</strong> In QGC: <span className="font-mono text-xs bg-gray-200 px-1 rounded">Application Settings → Comm Links → Add → WiFi</span>.</p>
+              <p><strong>3.</strong> Connect your laptop/phone to the drone's WiFi, then press <strong>Connect</strong>.</p>
+              <p className="text-emerald-700 font-semibold">✓ Connected in ~15s — telemetry appears automatically.</p>
             </div>
           )}
-          <div className="text-xs text-gray-500 mt-3 font-mono break-all text-center">
-            {pairingPayload}
+          {method === "usb" && (
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm text-gray-600">
+              <p className="text-base font-bold text-gray-900">USB cable — works with almost any drone</p>
+              <p><strong>1.</strong> Plug a data USB cable (not just a charging one) from laptop → drone's flight controller.</p>
+              <p><strong>2.</strong> Windows might need the driver: open QGC → <span className="font-mono text-xs bg-gray-200 px-1 rounded">Tools → Install Driver</span>.</p>
+              <p><strong>3.</strong> QGC auto-detects the port (<span className="font-mono text-xs bg-gray-200 px-1 rounded">COM7</span> or <span className="font-mono text-xs bg-gray-200 px-1 rounded">/dev/ttyUSB0</span>). Wait ~10s.</p>
+              <p className="text-emerald-700 font-semibold">✓ Green “connected” banner — you're in.</p>
+            </div>
+          )}
+          {method === "radio" && (
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm text-gray-600">
+              <p className="text-base font-bold text-gray-900">Telemetry radio — fly far away</p>
+              <p><strong>1.</strong> Plug a SiK 433/915 MHz telemetry radio (~₹500) into the drone's telemetry port.</p>
+              <p><strong>2.</strong> Plug the matching second radio into the laptop via USB.</p>
+              <p><strong>3.</strong> QGC: <span className="font-mono text-xs bg-gray-200 px-1 rounded">Comm Links → Add → SiK Radio → pick COM3 → Connect</span>.</p>
+              <p className="text-emerald-700 font-semibold">✓ Works even 3+ km away — great for big fields.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5 rounded-xl overflow-hidden border border-gray-200">
+          <div className="bg-slate-800 p-3 font-mono text-xs text-green-400 space-y-1">
+            <div>&gt; qgc: waiting for link…</div>
+            <div>&gt; method: {method} ({device})</div>
+            <div>&gt; hint: power drone → open QGC → Connect</div>
           </div>
         </div>
 
         <button
           onClick={() => setConnected(true)}
-          className="mt-5 w-full inline-flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-700 text-white font-bold px-5 py-3 rounded-xl transition-colors"
+          className="mt-4 w-full inline-flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-700 text-white font-bold px-5 py-3 rounded-xl transition-colors"
         >
           {connected ? <Check className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-          {connected ? "Connected — starting link" : "Simulate pairing"}
+          {connected ? "Link active — check telemetry" : "Test the link (demo)"}
         </button>
         {connected && (
           <p className="mt-3 text-sm text-emerald-600 font-semibold flex items-center gap-1.5">
@@ -206,8 +238,8 @@ function PairTab() {
           </div>
         </div>
         <div className="mt-4 flex gap-3">
-          <a href={`data:text/plain;charset=utf-8,${encodeURIComponent(pairingPayload)}`} download="drone-pair.qr.txt" className="flex-1 inline-flex items-center justify-center gap-2 border border-gray-300 text-gray-700 text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
-            <Download className="w-4 h-4" /> Save QR
+          <a href="https://qgroundcontrol.com/downloads/" target="_blank" rel="noopener noreferrer" className="flex-1 inline-flex items-center justify-center gap-2 border border-gray-300 text-gray-700 text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
+            <Download className="w-4 h-4" /> Get QGroundControl
           </a>
           <button onClick={() => setConnected(false)} className="flex-1 inline-flex items-center justify-center gap-2 border border-red-200 text-red-600 text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-red-50 transition-colors">
             <X className="w-4 h-4" /> Disconnect
