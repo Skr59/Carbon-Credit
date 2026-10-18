@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Leaf, Calculator, UserPlus, Shield, ArrowRight, BarChart3, Truck, Wallet, Plane } from "lucide-react";
+import HeroSlider from "./components/HeroSlider";
 
 const TOOLS = [
   {
@@ -39,11 +40,7 @@ const TOOLS = [
 export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50">
-      <section className="bg-gradient-to-br from-green-700 via-green-600 to-emerald-500 text-white relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 18% 25%, rgba(255,255,255,.7) 0 1.5px, transparent 1.6px), radial-gradient(circle at 78% 60%, rgba(255,255,255,.5) 0 1.5px, transparent 1.6px)", backgroundSize: "30px 30px" }} />
-        <div className="absolute -right-16 -top-16 w-72 h-72 bg-white/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-24 -left-10 w-64 h-64 bg-emerald-300/20 rounded-full blur-3xl" />
-        <div className="max-w-6xl mx-auto px-4 py-16 md:py-20 relative">
+      <HeroSlider>
           <div className="inline-flex items-center gap-2 bg-white/15 rounded-full px-4 py-1.5 text-sm font-semibold mb-5 backdrop-blur">
             <Leaf className="w-4 h-4" /> Kisan Carbon Hub
           </div>
@@ -84,8 +81,7 @@ export default function Home() {
               </div>
             ))}
           </div>
-        </div>
-      </section>
+      </HeroSlider>
 
       <section className="max-w-6xl mx-auto px-4 py-12">
         <h2 className="text-xl font-bold text-gray-900 mb-6">The platform</h2>
