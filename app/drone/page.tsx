@@ -50,6 +50,109 @@ function useMemoGrid(c: number, r: number) {
   return pts;
 }
 
+function useLiveLocation() {
+  const [loc, setLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const locate = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) { setErr("Geolocation not supported"); return; }
+    setLoading(true); setErr(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => { setLoc({ lat: p.coords.latitude, lng: p.coords.longitude }); setLoading(false); },
+      (e) => { setErr(e.message || "Location denied"); setLoading(false); },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 2000 }
+    );
+  };
+  useEffect(() => { locate(); }, []);
+  return { loc, err, loading, locate };
+}
+
+function MissionMap({ rows, cols, spacingM, altM }: { rows: number; cols: number; spacingM: number; altM: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const gridLayerRef = useRef<any>(null);
+  const liveMarkerRef = useRef<any>(null);
+  const liveCircleRef = useRef<any>(null);
+  const { loc, err, loading, locate } = useLiveLocation();
+  const [center, setCenter] = useState<[number, number]>([26.9124, 80.9639]);
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    const L = require("leaflet");
+    const map = L.map(containerRef.current, { center, zoom: 17, zoomControl: true, attributionControl: true });
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { attribution: "Esri World Imagery", maxZoom: 19 }).addTo(map);
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { attribution: "", maxZoom: 19, opacity: 0.7 }).addTo(map);
+    gridLayerRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
+    return () => { map.remove(); mapRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    if (!loc) return;
+    const c: [number, number] = [loc.lat, loc.lng];
+    setCenter(c);
+    const L = require("leaflet");
+    const map = mapRef.current;
+    if (!map) return;
+    if (!liveMarkerRef.current) {
+      const icon = L.divIcon({ className: "", html: `<div style="width:18px;height:18px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 0 0 10px rgba(37,99,235,.25);"></div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
+      liveMarkerRef.current = L.marker(c, { icon }).addTo(map);
+      liveCircleRef.current = L.circle(c, { radius: 30, color: "#2563eb", weight: 1, fillColor: "#2563eb", fillOpacity: 0.15 }).addTo(map);
+    } else {
+      liveMarkerRef.current.setLatLng(c);
+      if (liveCircleRef.current) liveCircleRef.current.setLatLng(c);
+    }
+  }, [loc]);
+
+  useEffect(() => {
+    const L = require("leaflet");
+    const map = mapRef.current;
+    const layer = gridLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    const dLat = spacingM / 111320;
+    const dLng = spacingM / (111320 * Math.cos((center[0] * Math.PI) / 180));
+    const pts: [number, number][] = [];
+    for (let j = 0; j < rows; j++) {
+      const y = center[0] + (j - (rows - 1) / 2) * dLat;
+      const xs: number[] = [];
+      for (let i = 0; i < cols; i++) xs.push(center[1] + (i - (cols - 1) / 2) * dLng);
+      if (j % 2 === 1) xs.reverse();
+      for (const x of xs) pts.push([y, x]);
+    }
+    if (pts.length > 1) L.polyline(pts, { color: "#0ea5e9", weight: 2, dashArray: "6 5", opacity: 0.9 }).addTo(layer);
+    pts.forEach((p, i) => {
+      const icon = L.divIcon({ className: "", html: `<div style="width:20px;height:20px;background:#0284c7;color:#fff;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font:bold 9px sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.4);">${i + 1}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+      L.marker(p, { icon, interactive: false }).addTo(layer);
+    });
+    if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 19 });
+  }, [rows, cols, spacingM, center]);
+
+  return (
+    <div className="relative rounded-xl overflow-hidden border border-green-100">
+      <div ref={containerRef} className="w-full h-[420px]" />
+      <div className="absolute top-2 left-2 z-[1000] bg-white/90 backdrop-blur rounded-lg px-2.5 py-1 text-[11px] font-mono text-gray-700 font-bold">
+        {rows * cols} waypoints · {spacingM} m spacing · {altM} m alt
+      </div>
+      {loc && (
+        <div className="absolute bottom-2 right-2 z-[1000] bg-blue-600 text-white text-[10px] px-2 py-1 rounded-full flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" /> Live location on
+        </div>
+      )}
+      {loading && (
+        <button onClick={locate} className="absolute bottom-2 right-2 z-[1000] bg-white/90 text-gray-700 text-[10px] px-2 py-1 rounded-full flex items-center gap-1.5">
+          Getting GPS…
+        </button>
+      )}
+      {err && !loc && (
+        <button onClick={locate} className="absolute bottom-2 right-2 z-[1000] bg-red-50 text-red-600 text-[10px] px-2 py-1 rounded-full flex items-center gap-1.5 border border-red-200">
+          <Satellite className="w-3 h-3" /> {err} — tap to retry
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function DronePage() {
   const [tab, setTab] = useState("pair");
 
@@ -105,6 +208,7 @@ function PairTab() {
   const [connected, setConnected] = useState(false);
   const [bat, setBat] = useState(86);
   const [method, setMethod] = useState<"wifi" | "usb" | "radio">("wifi");
+  const { loc: gpsLoc } = useLiveLocation();
 
   useEffect(() => {
     const t = setInterval(() => setBat((b) => (b > 5 ? b - 1 : 86)), 20000);
@@ -226,7 +330,7 @@ function PairTab() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-500 flex items-center gap-2"><MapPin className="w-4 h-4 text-red-500" /> Position</span>
-            <span className="text-sm font-bold text-gray-800">26.9124° N, 80.9639° E</span>
+            <span className="text-sm font-bold text-gray-800">{gpsLoc ? `${gpsLoc.lat.toFixed(4)}° N, ${gpsLoc.lng.toFixed(4)}° E` : "Locating…"}</span>
           </div>
         </div>
         <div className="mt-5 rounded-xl overflow-hidden border border-gray-200">
@@ -258,6 +362,7 @@ function FlyTab() {
   const [camErr, setCamErr] = useState<string | null>(null);
   const [shots, setShots] = useState<string[]>([]);
   const [simSway, setSimSway] = useState(0);
+  const { loc: gpsLoc } = useLiveLocation();
 
   const startCamera = useCallback(async () => {
     setCamErr(null);
@@ -427,7 +532,7 @@ function FlyTab() {
         <div className="bg-black/80 backdrop-blur px-4 py-3 flex items-center justify-between">
           <div className="text-xs font-mono text-green-400 space-y-0.5">
             <div>ALT 58m · SPD 4.2 m/s · HRT {Math.round(Math.sin(simSway / 18) * 30)}°</div>
-            <div>LAT 26.9124 · LON 80.9639</div>
+            <div>LAT {gpsLoc ? gpsLoc.lat.toFixed(4) : "26.9124"} · LON {gpsLoc ? gpsLoc.lng.toFixed(4) : "80.9639"}</div>
           </div>
           <button
             onClick={capture}
@@ -506,34 +611,7 @@ function MissionTab() {
           <Field label="Altitude (m)" value={alt} onChange={setAlt} min={20} max={120} step={5} />
         </div>
 
-        <div className="relative bg-green-50 rounded-xl p-4 border border-green-100" style={{ aspectRatio: "4/3" }}>
-          <div className="absolute inset-0" style={{ backgroundImage: "repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(22,163,74,.08) 40px), repeating-linear-gradient(90deg, transparent, transparent 49px, rgba(22,163,74,.08) 50px)" }} />
-          {wp.map((p, i) => (
-            <div
-              key={i}
-              className="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full bg-sky-600 text-white text-[9px] font-bold flex items-center justify-center border-2 border-white shadow"
-              style={{ left: `${((p.x + 0.5) / (cols)) * 100}%`, top: `${((p.y + 0.5) / rows) * 100}%` }}
-            >
-              {i + 1}
-            </div>
-          ))}
-          {wp.slice(1).map((p, i) => (
-            <svg key={`l${i}`} className="absolute inset-0 w-full h-full pointer-events-none">
-              <line
-                x1={`${((wp[i].x + 0.5) / cols) * 100}%`}
-                y1={`${((wp[i].y + 0.5) / rows) * 100}%`}
-                x2={`${((p.x + 0.5) / cols) * 100}%`}
-                y2={`${((p.y + 0.5) / rows) * 100}%`}
-                stroke="#0ea5e9"
-                strokeDasharray="5 4"
-                strokeWidth="1.5"
-              />
-            </svg>
-          ))}
-          <div className="absolute bottom-2 left-2 bg-white/90 rounded-lg px-2.5 py-1 text-[10px] font-mono text-gray-600">
-            {wp.length} waypoints
-          </div>
-        </div>
+        <MissionMap rows={rows} cols={cols} spacingM={spacing} altM={alt} />
       </div>
 
       <div className="space-y-4">
