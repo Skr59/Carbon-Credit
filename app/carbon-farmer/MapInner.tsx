@@ -156,7 +156,7 @@ export default function MapInner({
     }
 
     if (pts.length === 1) {
-      const marker = L.marker(pts[0], { draggable: false }).addTo(map);
+      const marker = L.marker(pts[0], { draggable: false, interactive: false }).addTo(map);
       markerRef.current = marker;
       return;
     }
@@ -165,6 +165,7 @@ export default function MapInner({
       polygonRef.current = L.polyline(pts, {
         color: "#16a34a",
         weight: 3,
+        interactive: false,
       }).addTo(map);
     }
 
